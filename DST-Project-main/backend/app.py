@@ -146,6 +146,11 @@ def check_reminder(prev_utc, curr_utc, timezone_str, reminder_time_str, last_tri
     return False, last_triggered, None
 
 
+@app.route("/", methods=["GET"])
+def health():
+    return jsonify({"status": "ok", "message": "DST Reminder API is running"})
+
+
 @app.route("/api/timezones", methods=["GET"])
 def get_timezones():
     return jsonify(US_TIMEZONES)
