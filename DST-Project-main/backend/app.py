@@ -338,6 +338,11 @@ def tick_emulator():
     alert = None
     if triggered:
         EMULATOR_STATE["last_triggered_date"] = new_date
+
+        # Strike off daily tasks when the reminder fires
+        for todo in data.get("todos", []):
+            todo["completed"] = True
+        save_storage(data)
         
         log_entry = {
             "timestamp": curr_utc.isoformat(),
@@ -347,7 +352,7 @@ def tick_emulator():
         EMULATOR_STATE["trigger_logs"].append(log_entry)
         alert = msg
         
-    state = get_state().json
+    state = get_state().get_json()
     return jsonify({
         "state": state,
         "triggered": triggered,
