@@ -8,7 +8,20 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-STORAGE_FILE = os.path.join(os.path.dirname(__file__), "storage.json")
+# Prefer /tmp on Vercel (project dir is read-only); fall back to local file for dev.
+STORAGE_FILE = (
+    "/tmp/dst_storage.json"
+    if os.environ.get("VERCEL")
+    else os.path.join(os.path.dirname(__file__), "storage.json")
+)
+
+# Source of truth in memory — required for serverless where file writes can fail
+# or different instances do not share disk.
+STORAGE_STATE = {
+    "timezone": "America/New_York",
+    "reminder_time": "08:00",
+    "todos": [],
+}
 
 # In-memory emulator and temporary session states (reset on server restart, which is fine)
 EMULATOR_STATE = {
@@ -31,20 +44,31 @@ US_TIMEZONES = [
 ]
 
 def load_storage():
+    """Return the live in-memory store (optionally hydrated once from disk)."""
+    global STORAGE_STATE
+    if STORAGE_STATE.get("_hydrated"):
+        return {k: v for k, v in STORAGE_STATE.items() if k != "_hydrated"}
+
     default_state = {
         "timezone": "America/New_York",
         "reminder_time": "08:00",
-        "todos": []
+        "todos": [],
     }
-    if not os.path.exists(STORAGE_FILE):
-        return default_state
-    try:
-        with open(STORAGE_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return default_state
+    loaded = default_state
+    if os.path.exists(STORAGE_FILE):
+        try:
+            with open(STORAGE_FILE, "r") as f:
+                loaded = json.load(f)
+        except Exception:
+            loaded = default_state
+
+    STORAGE_STATE = {**loaded, "_hydrated": True}
+    return {k: v for k, v in STORAGE_STATE.items() if k != "_hydrated"}
 
 def save_storage(data):
+    """Update memory first, then best-effort persist to disk."""
+    global STORAGE_STATE
+    STORAGE_STATE = {**data, "_hydrated": True}
     try:
         with open(STORAGE_FILE, "w") as f:
             json.dump(data, f, indent=2)
