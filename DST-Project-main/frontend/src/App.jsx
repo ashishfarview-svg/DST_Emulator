@@ -5,6 +5,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:5000/api";
 function App() {
   const [activeTab, setActiveTab] = useState("todo");
   const [state, setState] = useState(null);
+  const stateRef = useRef(null);
   
   // Timezone and reminder settings (local state for inputs)
   const [selectedTz, setSelectedTz] = useState("America/New_York");
@@ -16,7 +17,13 @@ function App() {
   // Emulator Custom Time Input
   const [customTime, setCustomTime] = useState("");
   const [timezones, setTimezones] = useState([]);
-  
+
+  const applyState = (nextState) => {
+    if (!nextState) return;
+    stateRef.current = nextState;
+    setState(nextState);
+  };
+
   // Fetch initial state & timezones
   useEffect(() => {
     fetchTimezones();
@@ -31,14 +38,43 @@ function App() {
     }
   }, [state?.timezone, state?.reminder_time]);
 
-  // Polling loop for live clock & state synchronization (every 1 second)
+  // Realtime mode only: refresh clock without wiping emulator session memory
   useEffect(() => {
     const pollInterval = setInterval(() => {
-      fetchState();
+      if (stateRef.current?.mode === "realtime") {
+        refreshState();
+      }
     }, 1000);
 
     return () => clearInterval(pollInterval);
   }, []);
+
+  const buildClientSnapshot = () => {
+    const current = stateRef.current;
+    if (!current) return null;
+    return {
+      timezone: current.timezone,
+      reminder_time: current.reminder_time,
+      todos: current.todos,
+      mode: current.mode,
+      emulator_time: current.emulator_time,
+      last_triggered_date: current.last_triggered_date,
+      trigger_logs: current.trigger_logs,
+    };
+  };
+
+  const apiPost = async (path, body = {}) => {
+    const snapshot = buildClientSnapshot();
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...body,
+        ...(snapshot ? { client_snapshot: snapshot } : {}),
+      }),
+    });
+    return res.json();
+  };
 
   const fetchTimezones = async () => {
     try {
@@ -54,21 +90,25 @@ function App() {
     try {
       const res = await fetch(`${API_BASE}/state`);
       const data = await res.json();
-      setState(data);
+      applyState(data);
     } catch (e) {
       console.error("Failed to fetch application state", e);
     }
   };
 
+  const refreshState = async () => {
+    try {
+      const data = await apiPost("/state");
+      applyState(data);
+    } catch (e) {
+      console.error("Failed to refresh application state", e);
+    }
+  };
+
   const saveConfig = async (tz = selectedTz, time = reminderTime) => {
     try {
-      const res = await fetch(`${API_BASE}/config`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ timezone: tz, reminder_time: time }),
-      });
-      const data = await res.json();
-      setState(data);
+      const data = await apiPost("/config", { timezone: tz, reminder_time: time });
+      applyState(data);
     } catch (e) {
       console.error("Failed to save config", e);
     }
@@ -78,13 +118,8 @@ function App() {
     e.preventDefault();
     if (!todoText.trim()) return;
     try {
-      const res = await fetch(`${API_BASE}/todos`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: todoText }),
-      });
-      const data = await res.json();
-      setState(data);
+      const data = await apiPost("/todos", { text: todoText });
+      applyState(data);
       setTodoText("");
     } catch (e) {
       console.error("Failed to add todo", e);
@@ -93,13 +128,8 @@ function App() {
 
   const handleToggleTodo = async (id) => {
     try {
-      const res = await fetch(`${API_BASE}/todos/toggle`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
-      const data = await res.json();
-      setState(data);
+      const data = await apiPost("/todos/toggle", { id });
+      applyState(data);
     } catch (e) {
       console.error("Failed to toggle todo", e);
     }
@@ -107,55 +137,19 @@ function App() {
 
   const handleDeleteTodo = async (id) => {
     try {
-      const res = await fetch(`${API_BASE}/todos/delete`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
-      const data = await res.json();
-      setState(data);
+      const data = await apiPost("/todos/delete", { id });
+      applyState(data);
     } catch (e) {
       console.error("Failed to delete todo", e);
     }
   };
 
-  const setEmulatorMode = async (mode) => {
-    try {
-      const res = await fetch(`${API_BASE}/emulator/set`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode }),
-      });
-      const data = await res.json();
-      setState(data);
-    } catch (e) {
-      console.error("Failed to change mode", e);
-    }
-  };
-
-  const setEmulatorTime = async (isoTime) => {
-    try {
-      const res = await fetch(`${API_BASE}/emulator/set`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emulator_time: isoTime }),
-      });
-      const data = await res.json();
-      setState(data);
-    } catch (e) {
-      console.error("Failed to set emulator time", e);
-    }
-  };
-
   const handleTick = async (secondsVal) => {
     try {
-      const res = await fetch(`${API_BASE}/emulator/tick`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ seconds: secondsVal }),
-      });
-      const data = await res.json();
-      setState(data.state);
+      const data = await apiPost("/emulator/tick", { seconds: secondsVal });
+      if (data.state) {
+        applyState(data.state);
+      }
       if (data.triggered) {
         // Only fire native browser alert dialog as requested
         alert(data.alert);
@@ -167,13 +161,8 @@ function App() {
 
   const resetLogs = async () => {
     try {
-      const res = await fetch(`${API_BASE}/emulator/set`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reset_logs: true }),
-      });
-      const data = await res.json();
-      setState(data);
+      const data = await apiPost("/emulator/set", { reset_logs: true });
+      applyState(data);
     } catch (e) {
       console.error("Failed to reset logs", e);
     }
@@ -181,32 +170,51 @@ function App() {
 
   // Preset scenarios handlers
   const loadSpringForwardPreset = async () => {
-    await setEmulatorMode("emulator");
     try {
-      const res = await fetch(`${API_BASE}/emulator/set`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ custom_local_time: "2026-03-08 01:58:00" }),
+      const data = await apiPost("/emulator/set", {
+        mode: "emulator",
+        custom_local_time: "2026-03-08 01:58:00",
       });
-      const data = await res.json();
-      setState(data);
+      applyState(data);
     } catch (e) {
       console.error("Failed to load Spring Forward preset", e);
     }
   };
 
   const loadFallBackPreset = async () => {
-    await setEmulatorMode("emulator");
     try {
-      const res = await fetch(`${API_BASE}/emulator/set`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ custom_local_time: "2026-11-01 01:28:00 EDT" }),
+      const data = await apiPost("/emulator/set", {
+        mode: "emulator",
+        custom_local_time: "2026-11-01 01:28:00 EDT",
       });
-      const data = await res.json();
-      setState(data);
+      applyState(data);
     } catch (e) {
       console.error("Failed to load Fall Back preset", e);
+    }
+  };
+
+  const handleSetCustomTime = async () => {
+    try {
+      if (!customTime) return;
+      const parts = customTime.trim().split(/\s+/);
+      if (parts.length < 2 || parts.length > 3) {
+        throw new Error("Format: YYYY-MM-DD HH:MM:SS [EST/EDT]");
+      }
+
+      const data = await apiPost("/emulator/set", {
+        custom_local_time: customTime.trim(),
+      });
+
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      applyState(data);
+    } catch (e) {
+      alert(
+        e.message ||
+          "Please enter a valid format: YYYY-MM-DD HH:MM:SS (e.g. 2026-03-08 01:58:00)"
+      );
     }
   };
 
@@ -321,31 +329,9 @@ function App() {
                       value={customTime}
                       onChange={(e) => setCustomTime(e.target.value)}
                     />
-                    <button 
+                    <button
                       className="btn btn-secondary"
-                      onClick={async () => {
-                        try {
-                          if (!customTime) return;
-                          const parts = customTime.trim().split(/\s+/);
-                          if (parts.length < 2 || parts.length > 3) throw new Error("Format: YYYY-MM-DD HH:MM:SS [EST/EDT]");
-                          
-                          const res = await fetch(`${API_BASE}/emulator/set`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ custom_local_time: customTime.trim() }),
-                          });
-                          
-                          if (!res.ok) {
-                            const err = await res.json();
-                            throw new Error(err.error || "Failed to set custom time");
-                          }
-                          
-                          const data = await res.json();
-                          setState(data);
-                        } catch (e) {
-                          alert(e.message || `Please enter a valid format: YYYY-MM-DD HH:MM:SS (e.g. 2026-03-08 01:58:00)`);
-                        }
-                      }}
+                      onClick={handleSetCustomTime}
                     >
                       Set
                     </button>

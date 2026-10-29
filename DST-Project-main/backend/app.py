@@ -75,6 +75,56 @@ def save_storage(data):
     except Exception as e:
         print(f"Error saving storage: {e}")
 
+
+def apply_client_snapshot(req):
+    """
+    Restore session from the browser. Required on Vercel because each
+    serverless invocation can be a fresh process with empty memory.
+    """
+    if not req:
+        return
+    snap = req.get("client_snapshot")
+    if not isinstance(snap, dict):
+        return
+
+    global STORAGE_STATE, EMULATOR_STATE
+    STORAGE_STATE = {
+        "timezone": snap.get("timezone") or "America/New_York",
+        "reminder_time": snap.get("reminder_time") or "08:00",
+        "todos": snap.get("todos") if isinstance(snap.get("todos"), list) else [],
+        "_hydrated": True,
+    }
+    if snap.get("mode") in ("emulator", "realtime"):
+        EMULATOR_STATE["mode"] = snap["mode"]
+    if snap.get("emulator_time"):
+        EMULATOR_STATE["emulator_time"] = snap["emulator_time"]
+    if "last_triggered_date" in snap:
+        EMULATOR_STATE["last_triggered_date"] = snap.get("last_triggered_date")
+    if "trigger_logs" in snap and isinstance(snap.get("trigger_logs"), list):
+        EMULATOR_STATE["trigger_logs"] = snap["trigger_logs"]
+
+
+def build_state():
+    data = load_storage()
+    curr_utc = get_current_time_utc()
+    tz = ZoneInfo(data["timezone"])
+    local_dt = curr_utc.astimezone(tz)
+    return {
+        "timezone": data["timezone"],
+        "reminder_time": data["reminder_time"],
+        "todos": data["todos"],
+        "mode": EMULATOR_STATE["mode"],
+        "emulator_time": EMULATOR_STATE["emulator_time"],
+        "last_triggered_date": EMULATOR_STATE["last_triggered_date"],
+        "trigger_logs": EMULATOR_STATE["trigger_logs"],
+        "current_time_utc": curr_utc.isoformat(),
+        "local_time": local_dt.isoformat(),
+        "local_time_display": local_dt.strftime("%Y-%m-%d %I:%M:%S %p"),
+        "timezone_abbr": local_dt.tzname(),
+        "utc_offset": local_dt.strftime("%z"),
+    }
+
+
 def get_current_time_utc():
     if EMULATOR_STATE["mode"] == "realtime":
         return datetime.now(ZoneInfo("UTC"))
@@ -180,96 +230,82 @@ def get_timezones():
     return jsonify(US_TIMEZONES)
 
 
-@app.route("/api/state", methods=["GET"])
+@app.route("/api/state", methods=["GET", "POST"])
 def get_state():
-    data = load_storage()
-    curr_utc = get_current_time_utc()
-    
-    # Calculate local time
-    tz = ZoneInfo(data["timezone"])
-    local_dt = curr_utc.astimezone(tz)
-    
-    response = {
-        "timezone": data["timezone"],
-        "reminder_time": data["reminder_time"],
-        "todos": data["todos"],
-        "mode": EMULATOR_STATE["mode"],
-        "emulator_time": EMULATOR_STATE["emulator_time"],
-        "last_triggered_date": EMULATOR_STATE["last_triggered_date"],
-        "trigger_logs": EMULATOR_STATE["trigger_logs"],
-        "current_time_utc": curr_utc.isoformat(),
-        "local_time": local_dt.isoformat(),
-        "local_time_display": local_dt.strftime("%Y-%m-%d %I:%M:%S %p"),
-        "timezone_abbr": local_dt.tzname(),
-        "utc_offset": local_dt.strftime("%z")
-    }
-    return jsonify(response)
+    if request.method == "POST":
+        apply_client_snapshot(request.json)
+    return jsonify(build_state())
 
 
 @app.route("/api/config", methods=["POST"])
 def update_config():
+    req = request.json or {}
+    apply_client_snapshot(req)
     data = load_storage()
-    req = request.json
-    
+
     if "timezone" in req:
         data["timezone"] = req["timezone"]
     if "reminder_time" in req:
         data["reminder_time"] = req["reminder_time"]
-        
+
     save_storage(data)
-    
+
     # Reset triggered date when config changes so they can test immediately
     EMULATOR_STATE["last_triggered_date"] = None
-    
-    return get_state()
+
+    return jsonify(build_state())
 
 
 @app.route("/api/todos", methods=["POST"])
 def add_todo():
+    req = request.json or {}
+    apply_client_snapshot(req)
     data = load_storage()
-    req = request.json
-    
+
     new_todo = {
-        "id": len(data["todos"]) + 1,
+        "id": (max([t.get("id", 0) for t in data["todos"]] + [0]) + 1),
         "text": req.get("text", "").strip(),
         "completed": False
     }
     if new_todo["text"]:
         data["todos"].append(new_todo)
         save_storage(data)
-        
-    return get_state()
+
+    return jsonify(build_state())
 
 
 @app.route("/api/todos/toggle", methods=["POST"])
 def toggle_todo():
+    req = request.json or {}
+    apply_client_snapshot(req)
     data = load_storage()
-    req = request.json
     todo_id = req.get("id")
-    
+
     for todo in data["todos"]:
         if todo["id"] == todo_id:
             todo["completed"] = not todo["completed"]
             break
-            
+
     save_storage(data)
-    return get_state()
+    return jsonify(build_state())
 
 
 @app.route("/api/todos/delete", methods=["POST"])
 def delete_todo():
+    req = request.json or {}
+    apply_client_snapshot(req)
     data = load_storage()
-    req = request.json
     todo_id = req.get("id")
-    
+
     data["todos"] = [t for t in data["todos"] if t["id"] != todo_id]
     save_storage(data)
-    return get_state()
+    return jsonify(build_state())
 
 
 @app.route("/api/emulator/set", methods=["POST"])
 def set_emulator():
-    req = request.json
+    req = request.json or {}
+    apply_client_snapshot(req)
     if "mode" in req:
         EMULATOR_STATE["mode"] = req["mode"]
     if "emulator_time" in req:
@@ -279,21 +315,21 @@ def set_emulator():
         try:
             data = load_storage()
             tz = ZoneInfo(data["timezone"])
-            
+
             time_str = req["custom_local_time"].strip()
             suffix = ""
             parts = time_str.split()
             if len(parts) == 3:
                 suffix = parts[2].upper()
                 time_str = f"{parts[0]} {parts[1]}"
-                
+
             naive_dt = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            
+
             fold = 0
             # If standard time suffix is typed, resolve to the EST/Standard occurrence
             if suffix in ["EST", "CST", "MST", "PST", "AKST", "HAST"]:
                 fold = 1
-                
+
             local_dt = naive_dt.replace(tzinfo=tz, fold=fold)
             utc_dt = local_dt.astimezone(ZoneInfo("UTC"))
             EMULATOR_STATE["emulator_time"] = utc_dt.isoformat()
@@ -302,39 +338,40 @@ def set_emulator():
     if "reset_logs" in req and req["reset_logs"]:
         EMULATOR_STATE["trigger_logs"] = []
         EMULATOR_STATE["last_triggered_date"] = None
-        
-    return get_state()
+
+    return jsonify(build_state())
 
 
 @app.route("/api/emulator/tick", methods=["POST"])
 def tick_emulator():
-    req = request.json
+    req = request.json or {}
+    apply_client_snapshot(req)
     seconds = int(req.get("seconds", 60))
-    
+
     if EMULATOR_STATE["mode"] != "emulator":
         return jsonify({"error": "Cannot tick clock when in realtime mode"}), 400
-        
+
     data = load_storage()
     prev_utc = get_current_time_utc()
-    
+
     # Tick the clock
     curr_utc = prev_utc + timedelta(seconds=seconds)
     EMULATOR_STATE["emulator_time"] = curr_utc.isoformat()
-    
+
     # Check for alarm trigger (only if tasks are present in the list)
     triggered = False
     new_date = EMULATOR_STATE["last_triggered_date"]
     msg = ""
-    
+
     if len(data.get("todos", [])) > 0:
         triggered, new_date, msg = check_reminder(
-            prev_utc, 
-            curr_utc, 
-            data["timezone"], 
-            data["reminder_time"], 
+            prev_utc,
+            curr_utc,
+            data["timezone"],
+            data["reminder_time"],
             EMULATOR_STATE["last_triggered_date"]
         )
-    
+
     alert = None
     if triggered:
         EMULATOR_STATE["last_triggered_date"] = new_date
@@ -343,7 +380,7 @@ def tick_emulator():
         for todo in data.get("todos", []):
             todo["completed"] = True
         save_storage(data)
-        
+
         log_entry = {
             "timestamp": curr_utc.isoformat(),
             "message": msg,
@@ -351,10 +388,9 @@ def tick_emulator():
         }
         EMULATOR_STATE["trigger_logs"].append(log_entry)
         alert = msg
-        
-    state = get_state().get_json()
+
     return jsonify({
-        "state": state,
+        "state": build_state(),
         "triggered": triggered,
         "alert": alert
     })
