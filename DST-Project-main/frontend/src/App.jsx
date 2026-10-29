@@ -184,17 +184,17 @@ function App() {
     }
   };
 
-  // Presets jump near the DST edge and set a reminder that will fire on the next ticks
+  // Presets land 1 second before the DST edge so +1 Sec exercises the transition
   const loadSpringForwardPreset = async () => {
     try {
       const data = await apiPost("/emulator/set", {
         mode: "emulator",
-        custom_local_time: "2026-03-08 01:58:00",
+        custom_local_time: "2026-03-08 01:59:55 EST",
         reminder_time: "02:30",
       });
       applyState(data);
       setReminderBanner(
-        "Spring Forward loaded: clock 1:58 AM, reminder 2:30 AM (skipped gap). Add a task, then press +1 Min / +5 Min."
+        "Spring Forward loaded: 2026-03-08 01:59:55 EST, reminder 2:30 AM. Add a task, then press +1 Sec."
       );
     } catch (e) {
       console.error("Failed to load Spring Forward preset", e);
@@ -205,12 +205,12 @@ function App() {
     try {
       const data = await apiPost("/emulator/set", {
         mode: "emulator",
-        custom_local_time: "2026-11-01 01:28:00 EDT",
+        custom_local_time: "2026-11-01 01:29:55 EDT",
         reminder_time: "01:30",
       });
       applyState(data);
       setReminderBanner(
-        "Fall Back loaded: clock 1:28 AM EDT, reminder 1:30 AM. Add a task, then press +1 Min / +5 Min."
+        "Fall Back loaded: 2026-11-01 01:29:55 EDT, reminder 1:30 AM. Add a task, then press +1 Sec."
       );
     } catch (e) {
       console.error("Failed to load Fall Back preset", e);
