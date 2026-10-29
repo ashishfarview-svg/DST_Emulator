@@ -17,6 +17,7 @@ function App() {
   // Emulator Custom Time Input
   const [customTime, setCustomTime] = useState("");
   const [timezones, setTimezones] = useState([]);
+  const [reminderBanner, setReminderBanner] = useState(null);
 
   const applyState = (nextState) => {
     if (!nextState) return;
@@ -151,12 +152,27 @@ function App() {
         applyState(data.state);
       }
       if (data.triggered) {
-        // Only fire native browser alert dialog as requested
+        setActiveTab("todo");
+        setReminderBanner(
+          data.alert || "Reminder hit — daily tasks were marked complete."
+        );
         alert(data.alert);
       }
     } catch (e) {
       console.error("Failed to tick clock", e);
     }
+  };
+
+  const handleReminderTimeChange = (e) => {
+    const nextTime = e.target.value;
+    setReminderTime(nextTime);
+    if (nextTime) {
+      saveConfig(selectedTz, nextTime);
+    }
+  };
+
+  const handleDismissBanner = () => {
+    setReminderBanner(null);
   };
 
   const resetLogs = async () => {
@@ -168,14 +184,18 @@ function App() {
     }
   };
 
-  // Preset scenarios handlers
+  // Presets jump near the DST edge and set a reminder that will fire on the next ticks
   const loadSpringForwardPreset = async () => {
     try {
       const data = await apiPost("/emulator/set", {
         mode: "emulator",
         custom_local_time: "2026-03-08 01:58:00",
+        reminder_time: "02:30",
       });
       applyState(data);
+      setReminderBanner(
+        "Spring Forward loaded: clock 1:58 AM, reminder 2:30 AM (skipped gap). Add a task, then press +1 Min / +5 Min."
+      );
     } catch (e) {
       console.error("Failed to load Spring Forward preset", e);
     }
@@ -186,8 +206,12 @@ function App() {
       const data = await apiPost("/emulator/set", {
         mode: "emulator",
         custom_local_time: "2026-11-01 01:28:00 EDT",
+        reminder_time: "01:30",
       });
       applyState(data);
+      setReminderBanner(
+        "Fall Back loaded: clock 1:28 AM EDT, reminder 1:30 AM. Add a task, then press +1 Min / +5 Min."
+      );
     } catch (e) {
       console.error("Failed to load Fall Back preset", e);
     }
@@ -233,6 +257,14 @@ function App() {
     return `UTC${hours}:${mins}`;
   };
 
+  const handleShowTodoTab = () => {
+    setActiveTab("todo");
+  };
+
+  const handleShowEmulatorTab = () => {
+    setActiveTab("emulator");
+  };
+
   return (
     <div className="app-container">
       <header>
@@ -242,18 +274,27 @@ function App() {
         <div className="tabs">
           <button 
             className={`tab-btn ${activeTab === "todo" ? "active" : ""}`}
-            onClick={() => setActiveTab("todo")}
+            onClick={handleShowTodoTab}
           >
             📋 To-Do & Clock
           </button>
           <button 
             className={`tab-btn ${activeTab === "emulator" ? "active" : ""}`}
-            onClick={() => setActiveTab("emulator")}
+            onClick={handleShowEmulatorTab}
           >
             🧪 DST Emulator
           </button>
         </div>
       </header>
+
+      {reminderBanner && (
+        <div className="reminder-banner">
+          <span>{reminderBanner}</span>
+          <button type="button" className="btn btn-secondary" onClick={handleDismissBanner}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       <main className="dashboard-grid">
         {/* LEFT COLUMN */}
@@ -395,7 +436,7 @@ function App() {
                 <input 
                   type="time" 
                   value={reminderTime} 
-                  onChange={(e) => setReminderTime(e.target.value)}
+                  onChange={handleReminderTimeChange}
                 />
                 <button 
                   className="btn btn-secondary"
@@ -404,6 +445,9 @@ function App() {
                   Save
                 </button>
               </div>
+              <span className="hint-text">
+                Reminder fires only when you advance the emulator clock past this time (use +1 Min on DST Emulator). Tasks are then struck through.
+              </span>
             </div>
 
           </div>

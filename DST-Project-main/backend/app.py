@@ -311,6 +311,15 @@ def set_emulator():
     if "emulator_time" in req:
         # Expecting ISO format string
         EMULATOR_STATE["emulator_time"] = req["emulator_time"]
+    # Allow presets/UI to update reminder in the same request as the clock jump
+    if "reminder_time" in req or "timezone" in req:
+        data = load_storage()
+        if "reminder_time" in req:
+            data["reminder_time"] = req["reminder_time"]
+        if "timezone" in req:
+            data["timezone"] = req["timezone"]
+        save_storage(data)
+        EMULATOR_STATE["last_triggered_date"] = None
     if "custom_local_time" in req:
         try:
             data = load_storage()

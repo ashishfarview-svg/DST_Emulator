@@ -44,6 +44,29 @@ body {
   display: block;
 }
 
+.reminder-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0 0 1rem;
+  padding: 0.9rem 1.1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.hint-text {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
 .app-container {
   max-width: 1200px;
   margin: 0 auto;
@@ -350,7 +373,9 @@ select:focus, input[type="text"]:focus, input[type="time"]:focus {
 
 .todo-item.completed .todo-text {
   text-decoration: line-through;
+  text-decoration-thickness: 2px;
   color: var(--text-muted);
+  opacity: 0.65;
 }
 
 .todo-text {
